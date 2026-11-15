@@ -225,6 +225,18 @@ function checkText(text: string, kind: Kind, label: string, path: string, errors
   }
 }
 
+/** Instagram's button card (button visible on web + mobile) holds ≤ 640 chars; longer messages get a mobile-only quick reply. */
+export const BUTTON_CARD_MAX_CHARS = 640;
+
+function warnIfTooLongForButtonCard(text: string, path: string, errors: Issues, warnings: Issues) {
+  if (errors[path] || warnings[path]) return;
+  const m = measure(text);
+  if (m.maxChars > BUTTON_CARD_MAX_CHARS) {
+    warnings[path] =
+      `Over ${BUTTON_CARD_MAX_CHARS} characters${m.chars > BUTTON_CARD_MAX_CHARS ? "" : " with a long name"}: the button will only show in the Instagram mobile app, not on the web. Shorten it to keep the button everywhere.`;
+  }
+}
+
 function required(value: string, label: string, path: string, errors: Issues) {
   if (!value.trim()) {
     errors[path] = `${label} is required.`;
@@ -275,6 +287,7 @@ export function validateAutomation(a: AutomationInput): ValidationResult {
   // Opening DM
   if (required(a.openingMessage, "Opening message", "openingMessage", errors)) {
     checkText(a.openingMessage, "dm", "Opening message", "openingMessage", errors, warnings);
+    warnIfTooLongForButtonCard(a.openingMessage, "openingMessage", errors, warnings);
   }
   if (required(a.openingButton, "Button label", "openingButton", errors)) {
     checkText(a.openingButton, "quickReply", "Button label", "openingButton", errors, warnings);
@@ -284,6 +297,7 @@ export function validateAutomation(a: AutomationInput): ValidationResult {
   if (a.followGateEnabled) {
     if (required(a.notFollowingMessage, "“Not following” message", "notFollowingMessage", errors)) {
       checkText(a.notFollowingMessage, "dm", "“Not following” message", "notFollowingMessage", errors, warnings);
+      warnIfTooLongForButtonCard(a.notFollowingMessage, "notFollowingMessage", errors, warnings);
     }
     if (required(a.notFollowingButton, "Button label", "notFollowingButton", errors)) {
       checkText(a.notFollowingButton, "quickReply", "Button label", "notFollowingButton", errors, warnings);

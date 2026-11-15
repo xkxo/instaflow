@@ -465,15 +465,20 @@ export type MessageRecipient = { comment_id: string } | { id: string };
 
 export type QuickReply = { content_type: "text"; title: string; payload: string };
 
+export type PostbackButton = { type: "postback"; title: string; payload: string };
+
 export type OutgoingMessage =
   | { text: string; quick_replies?: QuickReply[] }
   | {
       attachment: {
         type: "template";
-        payload: {
-          template_type: "generic";
-          elements: { title: string; subtitle?: string; buttons: { type: "web_url"; url: string; title: string }[] }[];
-        };
+        payload:
+          | {
+              template_type: "generic";
+              elements: { title: string; subtitle?: string; buttons: { type: "web_url"; url: string; title: string }[] }[];
+            }
+          // Text (≤ 640 chars) with 1–3 buttons; shown on web and mobile, unlike quick replies.
+          | { template_type: "button"; text: string; buttons: PostbackButton[] };
       };
     };
 

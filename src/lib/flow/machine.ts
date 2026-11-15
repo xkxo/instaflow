@@ -9,6 +9,7 @@
  *                                     └ not following ──▶ resend gate, or ABANDONED after max re-checks
  */
 import {
+  BUTTON_CARD_MAX_CHARS,
   matchKeyword,
   renderTemplate,
   type AutomationInput,
@@ -191,9 +192,37 @@ export function quickReplyTitle(label: string): string {
   return chars.length <= 20 ? label : chars.slice(0, 19).join("") + "…";
 }
 
+/** Instagram's button template holds at most 640 characters of text. */
+export const BUTTON_TEMPLATE_MAX_CHARS = BUTTON_CARD_MAX_CHARS;
+
+/**
+ * Text + one tappable button. Preferred: a button template with a postback button, which shows
+ * on Instagram web and mobile. Quick replies (mobile only) are used when the text is too long for it.
+ */
 function textWithButton(text: string, button: string, payload: string): OutgoingMessage {
-  const qr: QuickReply = { content_type: "text", title: quickReplyTitle(button), payload };
-  return { text, quick_replies: [qr] };
+  const title = quickReplyTitle(button);
+  if ([...text].length > BUTTON_TEMPLATE_MAX_CHARS) {
+    const qr: QuickReply = { content_type: "text", title, payload };
+    return { text, quick_replies: [qr] };
+  }
+  return {
+    attachment: {
+      type: "template",
+      payload: { template_type: "button", text, buttons: [{ type: "postback", title, payload }] },
+    },
+  };
+}
+
+/**
+ * The next-simpler form of a button message, for when Instagram rejects it:
+ * button template → text + quick reply → plain text. Null when there's nothing simpler.
+ */
+export function simplerMessage(m: OutgoingMessage): OutgoingMessage | null {
+  if ("text" in m) return m.quick_replies?.length ? { text: m.text } : null;
+  const p = m.attachment.payload;
+  if (p.template_type !== "button") return null;
+  const b = p.buttons[0];
+  return b ? { text: p.text, quick_replies: [{ content_type: "text", title: b.title, payload: b.payload }] } : { text: p.text };
 }
 
 export function openingMessage(a: MessageAutomation, p: Person, runId: string): OutgoingMessage {

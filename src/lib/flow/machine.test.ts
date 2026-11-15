@@ -11,6 +11,7 @@ import {
   needsFollowCheck,
   notFollowingMessage,
   openingMessage,
+  simplerMessage,
   pickAutomation,
   pickPublicReply,
   privateReplyExpired,
@@ -236,20 +237,40 @@ describe("messages", () => {
     assert.deepEqual(templateValues({ username: null, name: null }), { first_name: "there", username: "there" });
   });
 
-  it("opening DM: rendered text + one quick reply carrying the run payload, title ≤ 20 chars", () => {
+  it("opening DM: button template with one postback button carrying the run payload, title ≤ 20 chars", () => {
     const m = openingMessage(a, jess, "run12345");
-    assert.ok("text" in m);
-    if (!("text" in m)) return;
-    assert.equal(m.text, "Hey Jess! Tap below");
-    assert.equal(m.quick_replies?.length, 1);
-    assert.equal(m.quick_replies![0].content_type, "text");
-    assert.equal(m.quick_replies![0].payload, "IF1:run12345:OPT_IN");
-    assert.ok([...m.quick_replies![0].title].length <= 20);
+    assert.ok(!("text" in m));
+    if ("text" in m) return;
+    const p = m.attachment.payload;
+    assert.equal(p.template_type, "button");
+    if (p.template_type !== "button") return;
+    assert.equal(p.text, "Hey Jess! Tap below");
+    assert.equal(p.buttons.length, 1);
+    assert.equal(p.buttons[0].type, "postback");
+    assert.equal(p.buttons[0].payload, "IF1:run12345:OPT_IN");
+    assert.ok([...p.buttons[0].title].length <= 20);
+  });
+
+  it("opening DM over 640 chars falls back to a quick reply (button template limit)", () => {
+    const m = openingMessage({ ...a, openingMessage: "x".repeat(641) }, jess, "run12345");
+    assert.ok("text" in m && m.quick_replies?.[0].payload === "IF1:run12345:OPT_IN");
   });
 
   it("not-following message carries the FOLLOWED payload", () => {
     const m = notFollowingMessage(a, jess, "run12345");
-    assert.ok("text" in m && m.text === "Follow first, @jess.p" && m.quick_replies?.[0].payload === "IF1:run12345:FOLLOWED");
+    assert.ok(!("text" in m) && m.attachment.payload.template_type === "button");
+    if ("text" in m || m.attachment.payload.template_type !== "button") return;
+    assert.equal(m.attachment.payload.text, "Follow first, @jess.p");
+    assert.equal(m.attachment.payload.buttons[0].payload, "IF1:run12345:FOLLOWED");
+  });
+
+  it("simplerMessage: button template → quick reply → text → nothing", () => {
+    const card = openingMessage(a, jess, "run12345");
+    const qr = simplerMessage(card);
+    assert.deepEqual(qr, { text: "Hey Jess! Tap below", quick_replies: [{ content_type: "text", title: "Send me the link pl…", payload: "IF1:run12345:OPT_IN" }] });
+    assert.deepEqual(simplerMessage(qr!), { text: "Hey Jess! Tap below" });
+    assert.equal(simplerMessage({ text: "hi" }), null);
+    assert.equal(simplerMessage(deliveryCard(a, jess)), null);
   });
 
   it("delivery: text, then a generic-template card with a web_url button", () => {

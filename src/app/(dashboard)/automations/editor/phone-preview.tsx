@@ -36,13 +36,19 @@ function Bubble({ from, children, muted }: { from: "business" | "user"; children
   );
 }
 
-function QuickReply({ label }: { label: string }) {
+/** Button template: message text with a tappable button underneath (Instagram web + mobile). */
+function ButtonCard({ text, label }: { text: string; label: string }) {
   const shown = [...label];
   return (
-    <div className="flex justify-end">
-      <span className="rounded-full border border-violet-500/70 px-3 py-1 text-[12px] font-medium text-violet-300">
-        {shown.length > 20 ? `${shown.slice(0, 20).join("")}…` : label || "Button"}
-      </span>
+    <div className="flex justify-start">
+      <div className="w-[80%] overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-800">
+        <p className="whitespace-pre-wrap break-words px-3 py-2 text-[13px] leading-snug text-zinc-100">
+          {text || <span className="italic text-zinc-500">Empty message</span>}
+        </p>
+        <div className="border-t border-zinc-700 py-2 text-center text-[12.5px] font-medium text-sky-400">
+          {shown.length > 20 ? `${shown.slice(0, 19).join("")}…` : label || "Button"}
+        </div>
+      </div>
     </div>
   );
 }
@@ -133,15 +139,13 @@ export function PhonePreview({ a, ownUsername }: { a: AutomationInput; ownUserna
 
         <div className="max-h-[max(360px,calc(100vh-24rem))] space-y-2 overflow-y-auto px-3 py-3">
           <Divider>Private reply to comment</Divider>
-          <Bubble from="business">{fill(a.openingMessage)}</Bubble>
-          <QuickReply label={fill(a.openingButton)} />
+          <ButtonCard text={fill(a.openingMessage)} label={fill(a.openingButton)} />
           <Bubble from="user">{fill(a.openingButton)}</Bubble>
 
           {a.followGateEnabled && (
             <>
               <Divider>If not following · up to {a.maxFollowChecks}×</Divider>
-              <Bubble from="business">{fill(a.notFollowingMessage)}</Bubble>
-              <QuickReply label={fill(a.notFollowingButton)} />
+              <ButtonCard text={fill(a.notFollowingMessage)} label={fill(a.notFollowingButton)} />
               <Bubble from="user">{fill(a.notFollowingButton)}</Bubble>
             </>
           )}

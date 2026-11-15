@@ -13,6 +13,7 @@ import {
   pickAutomation,
   pickPublicReply,
   privateReplyExpired,
+  simplerMessage,
   tapForStep,
   transition,
   type Tap,
@@ -193,6 +194,30 @@ export async function sendPublicReply(ctx: FlowContext, runId: string) {
 
 // ── Opening DM (private reply) ──────────────────────────────────────────────
 
+/**
+ * Send a message with a button. If Instagram rejects the format (invalid parameter, so nothing was
+ * sent), retry with the next-simpler form: button template → quick reply → plain text. A text
+ * reply from the person still counts as the tap, so the flow works with any of them.
+ */
+async function sendWithButtonFallback(ctx: FlowContext, runId: string, recipient: MessageRecipient, first: OutgoingMessage) {
+  let message = first;
+  for (;;) {
+    try {
+      return { message, res: await ctx.messenger.sendMessage(recipient, message) };
+    } catch (err) {
+      const simpler = err instanceof InstagramApiError && err.code === 100 ? simplerMessage(message) : null;
+      if (!simpler) throw err;
+      const what = "text" in message ? "quick-reply button" : "button card";
+      const next = "quick_replies" in simpler ? "a quick reply" : "text only (any reply counts as the tap)";
+      await recordEvent(runId, "button_rejected", `Instagram rejected the ${what}; retrying with ${next}.`, {
+        level: "warn",
+        data: { error: (err as InstagramApiError).info },
+      });
+      message = simpler;
+    }
+  }
+}
+
 export async function sendOpening(ctx: FlowContext, runId: string) {
   const run = await loadRun(runId);
   if (!run || run.status !== "ACTIVE" || run.currentStep !== "TRIGGERED") return;
@@ -203,24 +228,7 @@ export async function sendOpening(ctx: FlowContext, runId: string) {
   }
 
   const recipient: MessageRecipient = { comment_id: run.commentId };
-  let message: OutgoingMessage = openingMessage(run.automation, run.contact, runId);
-  let res;
-  try {
-    res = await ctx.messenger.sendMessage(recipient, message);
-  } catch (err) {
-    // Meta doesn't document quick replies in private replies. If it rejects the button
-    // (invalid parameter), nothing was sent, so send the text alone; any text reply then counts as opt-in.
-    if (err instanceof InstagramApiError && err.code === 100 && "quick_replies" in message) {
-      await recordEvent(runId, "quick_reply_rejected", "Instagram rejected the quick-reply button on the private reply; sending text only. Any reply from the person will count as opting in.", {
-        level: "warn",
-        data: { error: err.info },
-      });
-      message = { text: message.text };
-      res = await ctx.messenger.sendMessage(recipient, message);
-    } else {
-      throw err;
-    }
-  }
+  const { message, res } = await sendWithButtonFallback(ctx, runId, recipient, openingMessage(run.automation, run.contact, runId));
 
   await prisma.flowRun.updateMany({
     where: { id: runId, currentStep: "TRIGGERED" },
@@ -371,8 +379,7 @@ export async function sendNotFollowing(ctx: FlowContext, runId: string, check: n
   // Stale if the run moved on (or another check happened) since this was scheduled.
   if (!run || run.status !== "ACTIVE" || run.currentStep !== "AWAITING_FOLLOW" || run.followChecks !== check) return;
   const recipient = { id: run.contact.igsid };
-  const message = notFollowingMessage(run.automation, run.contact, runId);
-  const res = await ctx.messenger.sendMessage(recipient, message);
+  const { message, res } = await sendWithButtonFallback(ctx, runId, recipient, notFollowingMessage(run.automation, run.contact, runId));
   await recordEvent(runId, "not_following_sent", "Sent the follow-gate message. Waiting for “I've followed”.", {
     data: { ...req(ctx, "POST", `/{ig-account-id}/messages`, { recipient, message }), response: res },
   });
