@@ -689,3 +689,7 @@ src/
   instrumentation.ts     # starts the in-process job poller on long-running servers
   components/            # sidebar, logo, page header, timeline, useNow
 ```
+
+## License
+
+[MIT](LICENSE)
