@@ -1,0 +1,283 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum TokenStatus {
+  VALID
+  INVALID
+}
+
+/// The connected Instagram professional account (single-user app: at most one row).
+/// Connected through the Instagram API with Unified Login (graph.facebook.com).
+model InstagramAccount {
+  id                String      @id @default(cuid())
+  /// Instagram professional account ID used for Graph calls.
+  igAccountId       String      @unique
+  username          String
+  name              String?
+  profilePictureUrl String?
+  /// Business Integration System User access token, AES-256-GCM encrypted with
+  /// TOKEN_ENCRYPTION_KEY. Never store plaintext. Unbounded length: Meta token sizes vary.
+  accessTokenEnc    String
+  /// null = token never expires (login configuration expiry "Never").
+  tokenExpiresAt    DateTime?
+  /// Granted permissions, from /debug_token.
+  scopes            String[]
+  /// The client's business portfolio and the system user the token belongs to.
+  clientBusinessId  String?
+  systemUserId      String?
+  /// Login configuration (META_LOGIN_CONFIG_ID) used to connect.
+  configId          String
+  /// Result of the last health check (/debug_token). INVALID shows a red banner in the app.
+  tokenStatus       TokenStatus @default(VALID)
+  tokenStatusReason String?
+  tokenCheckedAt    DateTime?
+  /// Webhook fields this account is subscribed to (from /{ig-account-id}/subscribed_apps).
+  webhookFields     String[]
+  webhookCheckedAt  DateTime?
+  /// Last subscribe / status-check error (null when the last attempt succeeded).
+  webhookError      String?
+  connectedAt       DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+}
+
+// ── Automations ──────────────────────────────────────────────────────────────
+
+enum MediaScope {
+  ANY
+  SPECIFIC
+}
+
+enum KeywordMode {
+  ANY
+  KEYWORDS
+}
+
+enum KeywordMatch {
+  /// "link" matches "send the link!" but not "linkedin".
+  WHOLE_WORD
+  /// "link" matches anywhere, including "linkedin".
+  CONTAINS
+}
+
+/// Comment-to-DM automation. All message texts may contain {first_name} and {username}.
+model Automation {
+  id                  String       @id @default(cuid())
+  name                String
+  active              Boolean      @default(false)
+
+  // Trigger: comment on a specific post/reel or any post.
+  mediaScope          MediaScope   @default(ANY)
+  mediaId             String?
+  mediaPermalink      String?
+  /// Snapshot for display only (Instagram CDN URLs expire).
+  mediaThumbnailUrl   String?
+  mediaCaption        String?
+  mediaType           String?
+  mediaProductType    String?
+
+  // Keywords (case-insensitive).
+  keywordMode         KeywordMode  @default(KEYWORDS)
+  keywords            String[]
+  keywordMatch        KeywordMatch @default(WHOLE_WORD)
+
+  // Optional public reply to the comment; one variation picked at random.
+  publicReplyEnabled  Boolean      @default(true)
+  publicReplies       String[]
+
+  // Opening DM, sent as a private reply to the comment, with one quick-reply button.
+  openingMessage      String
+  openingButton       String
+
+  // Follow gate.
+  followGateEnabled   Boolean      @default(false)
+  notFollowingMessage String?
+  notFollowingButton  String?
+  maxFollowChecks     Int          @default(3)
+
+  // Final delivery: a text message, then a generic-template card with a URL button.
+  deliveryMessage     String
+  deliveryCardTitle   String
+  deliveryUrl         String
+  deliveryButton      String       @default("Open link")
+
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  runs                FlowRun[]
+
+  @@index([active, mediaScope, mediaId])
+}
+
+/// Someone who interacted with the account (commenter / DM sender).
+model Contact {
+  id              String    @id @default(cuid())
+  /// Instagram-scoped user ID.
+  igsid           String    @unique
+  username        String?
+  name            String?
+  firstSeenAt     DateTime  @default(now())
+  lastSeenAt      DateTime  @default(now())
+  /// null = never checked.
+  followsMe       Boolean?
+  followCheckedAt DateTime?
+  /// Created by "Simulate comment" (dry run). Hidden from Contacts and stats.
+  isTest          Boolean   @default(false)
+  updatedAt       DateTime  @updatedAt
+  runs            FlowRun[]
+
+  @@index([lastSeenAt])
+}
+
+enum FlowStep {
+  /// Comment matched; opening DM not sent yet.
+  TRIGGERED
+  /// Opening DM (private reply) sent; waiting for the quick-reply tap.
+  AWAITING_OPT_IN
+  /// "Not following" message sent; waiting for the "I've followed" tap.
+  AWAITING_FOLLOW
+  /// Sending the link (text + card).
+  DELIVERING
+  /// Link delivered.
+  DELIVERED
+}
+
+enum FlowRunStatus {
+  ACTIVE
+  COMPLETED
+  /// Gave up (e.g. still not following after maxFollowChecks).
+  ABANDONED
+  FAILED
+}
+
+/// One automation run for one person (started by their comment).
+model FlowRun {
+  id              String         @id @default(cuid())
+  automationId    String
+  automation      Automation     @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  contactId       String
+  contact         Contact        @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  commentId       String
+  commentText     String?
+  mediaId         String?
+  /// When the comment was made (private replies must be sent within 7 days of it).
+  commentedAt     DateTime       @default(now())
+  currentStep     FlowStep       @default(TRIGGERED)
+  status          FlowRunStatus  @default(ACTIVE)
+  /// Follow checks that came back "not following".
+  followChecks    Int            @default(0)
+  publicReplyText String?
+  /// Matched keyword (null for "any comment").
+  matchedKeyword  String?
+  error           String?
+  /// Simulated run ("Simulate comment"): no real API calls, excluded from stats.
+  dryRun          Boolean        @default(false)
+  startedAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  publicRepliedAt DateTime?
+  openingSentAt   DateTime?
+  optedInAt       DateTime?
+  /// First time the follow gate blocked this run.
+  followGatedAt   DateTime?
+  completedAt     DateTime?
+  events          FlowRunEvent[]
+
+  /// One run per person per automation.
+  @@unique([automationId, contactId])
+  @@index([commentId])
+  @@index([contactId, status])
+  @@index([automationId, status])
+  @@index([startedAt])
+}
+
+/// Timeline entry for a FlowRun: each step, API call and error.
+model FlowRunEvent {
+  id    String   @id @default(cuid())
+  runId String
+  run   FlowRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  at    DateTime @default(now())
+  /// e.g. matched, public_reply_sent, opening_sent, opted_in, follow_checked, not_following_sent,
+  /// delivery_text_sent, delivery_card_sent, completed, abandoned, api_error, failed, ignored.
+  kind  String
+  /// info | warn | error
+  level String   @default("info")
+  message String
+  /// Extra detail: API request (without token), response, Meta error code, retry time.
+  data  Json?
+
+  @@index([runId, at])
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+}
+
+/// DB-backed job queue: webhook handling only enqueues; workers send messages with
+/// human-like delays and retry Meta 5xx / rate-limit errors with exponential backoff.
+model Job {
+  id          String    @id @default(cuid())
+  type        String
+  payload     Json
+  /// Idempotency key (e.g. "opening:<runId>"): the same job can't be enqueued twice.
+  key         String?   @unique
+  status      JobStatus @default(PENDING)
+  runAt       DateTime  @default(now())
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(6)
+  lockedAt    DateTime?
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, runAt])
+}
+
+/// One row per webhook event (a comment change or a messaging item), deduplicated.
+model WebhookEvent {
+  id             String    @id @default(cuid())
+  /// e.g. "comment:<comment id>", "message:<mid>", "postback:<mid>". Unique → dedup.
+  idempotencyKey String    @unique
+  /// "comment" | "message" | "quick_reply" | "postback" | other webhook field names.
+  type           String
+  /// entry.id: the Instagram account the event is for.
+  igAccountId    String?
+  /// Who triggered it: commenter / message sender (Instagram-scoped ID).
+  senderId       String?
+  senderUsername String?
+  text           String?
+  /// Quick-reply payload or postback payload.
+  actionPayload  String?
+  /// Raw event item plus its envelope (object, entry id, entry time).
+  payload        Json
+  receivedAt     DateTime  @default(now())
+  /// How many times Meta delivered this event (>1 = duplicate deliveries).
+  deliveryCount  Int       @default(1)
+  processed      Boolean   @default(false)
+  processedAt    DateTime?
+  /// Claimed by a processing run (prevents double-processing).
+  processingAt   DateTime?
+  /// Set when the event is deliberately skipped (own account, echo, other account).
+  ignoredReason  String?
+  error          String?
+
+  @@index([receivedAt])
+  @@index([processed, receivedAt])
+}
+
+/// One row per FAILED login attempt. Used for IP-based rate limiting.
+/// Rows older than the rate-limit window are pruned automatically.
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  ip        String
+  createdAt DateTime @default(now())
+
+  @@index([ip, createdAt])
+  @@index([createdAt])
+}
