@@ -1,34 +1,72 @@
 #!/usr/bin/env bash
 # Build InstaFlow as a standalone bundle and deploy it to a VPS running it under systemd.
 #
-#   DEPLOY_HOST=root@203.0.113.10 BASE_PATH=/instaflow PUBLIC_URL=https://example.com ./scripts/deploy.sh [--migrate]
+#   npm run deploy                 (settings from .deploy.env, see .deploy.env.example)
+#   npm run deploy -- --skip-checks --skip-migrate
 #
-# Env:
+# Steps: typecheck + unit tests → build → database migrations (through an SSH tunnel) →
+# upload → swap releases → restart → health check (automatic rollback if it fails).
+#
+# Settings (.deploy.env, or environment variables, which take precedence):
 #   DEPLOY_HOST   ssh target (required)
-#   BASE_PATH     sub-path the app is served under (default /instaflow; "" for the domain root)
 #   PUBLIC_URL    public origin, e.g. https://example.com (required)
+#   BASE_PATH     sub-path the app is served under (default /instaflow; "" for the domain root)
 #   APP_DIR       install dir on the server          (default /var/www/instaflow)
 #   SERVICE       systemd unit name                  (default instaflow)
 #   ENV_FILE      server env file with DATABASE_URL  (default /etc/instaflow/instaflow.env)
 #   APP_PORT      port the service listens on        (default 3200)
-#   --migrate     also run `prisma migrate deploy` against the server DB through an SSH tunnel
+#
+# Flags:
+#   --skip-checks    don't run typecheck and tests first
+#   --skip-migrate   don't run `prisma migrate deploy` (it's a no-op when nothing is pending)
 #
 # The new release is unpacked next to the live one and swapped in; the previous release is kept
 # as $APP_DIR.prev and restored automatically if the health check fails.
 set -euo pipefail
 export MSYS_NO_PATHCONV=1 MSYS2_ENV_CONV_EXCL='*' # Git Bash on Windows: don't rewrite /paths
+cd "$(dirname "$0")/.."
 
-: "${DEPLOY_HOST:?Set DEPLOY_HOST, e.g. root@203.0.113.10}"
-: "${PUBLIC_URL:?Set PUBLIC_URL, e.g. https://example.com}"
+# Load .deploy.env; variables already set in the environment win.
+if [[ -f .deploy.env ]]; then
+  while IFS='=' read -r key value; do
+    [[ "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]] || continue
+    # Strip one pair of surrounding quotes.
+    if [[ "$value" =~ ^\"(.*)\"$ || "$value" =~ ^\'(.*)\'$ ]]; then value="${BASH_REMATCH[1]}"; fi
+    if [[ -z "${!key+x}" ]]; then export "$key=$value"; fi
+  done < <(grep -vE '^[[:space:]]*(#|$)' .deploy.env | tr -d '\r')
+fi
+
+: "${DEPLOY_HOST:?Set DEPLOY_HOST in .deploy.env (copy .deploy.env.example)}"
+: "${PUBLIC_URL:?Set PUBLIC_URL in .deploy.env (copy .deploy.env.example)}"
 BASE_PATH="${BASE_PATH-/instaflow}"
 APP_DIR="${APP_DIR:-/var/www/instaflow}"
 SERVICE="${SERVICE:-instaflow}"
 ENV_FILE="${ENV_FILE:-/etc/instaflow/instaflow.env}"
 APP_PORT="${APP_PORT:-3200}"
-MIGRATE=false
-[[ "${1:-}" == "--migrate" ]] && MIGRATE=true
+CHECKS=true
+MIGRATE=true
+for arg in "$@"; do
+  case "$arg" in
+    --skip-checks) CHECKS=false ;;
+    --skip-migrate) MIGRATE=false ;;
+    --migrate) ;; # default now; kept for compatibility
+    *) echo "Unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
 
-cd "$(dirname "$0")/.."
+echo "==> Checking SSH access to $DEPLOY_HOST"
+ssh -o BatchMode=yes -o ConnectTimeout=10 "$DEPLOY_HOST" "systemctl cat '$SERVICE' >/dev/null && test -f '$ENV_FILE'" || {
+  echo "    Can't reach $DEPLOY_HOST without a password, or the server isn't set up ($SERVICE service / $ENV_FILE)." >&2
+  echo "    See README → \"Your own server (VPS)\"." >&2
+  exit 1
+}
+
+if $CHECKS; then
+  echo "==> Typecheck and unit tests"
+  npm run -s typecheck
+  npm test --silent >/dev/null || { echo "    Unit tests failed (run npm test to see why)." >&2; exit 1; }
+fi
+
 BUNDLE="$(mktemp -u -t instaflow-XXXXXX).tgz"
 trap 'rm -f "$BUNDLE"' EXIT
 

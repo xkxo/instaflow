@@ -10,3 +10,6 @@ src/generated
 .vercel
 npm-debug.log*
 .DS_Store
+
+# Deploy settings (server address etc.)
+.deploy.env

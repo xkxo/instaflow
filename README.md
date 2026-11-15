@@ -495,7 +495,7 @@ The system-user token doesn't expire, so there's no refresh job. It can still st
 | `npm run db:deploy` | Applies existing migrations (production). |
 | `npm run db:studio` | Opens Prisma Studio. |
 | `npm run build:standalone` | Builds a self-contained server bundle in `.next/standalone` (`BASE_PATH`, `PUBLIC_URL` env). |
-| `./scripts/deploy.sh` | Builds and deploys to a VPS over SSH, with automatic rollback (see [Your own server](#your-own-server-vps-optionally-under-a-sub-path)). |
+| `npm run deploy` | Tests, builds, migrates and deploys to a VPS over SSH, with automatic rollback. Settings come from `.deploy.env` (see [Your own server](#your-own-server-vps-optionally-under-a-sub-path)). |
 
 ---
 
@@ -597,18 +597,27 @@ The app can be served from a sub-path such as `https://example.com/instaflow`.
    ```
    Flow jobs need no cron, because the in-process poller handles them.
 
-**Deploying (and redeploying)** from your machine:
+**Deploying (and redeploying)** from your machine. Once:
+
+1. Set up key-based SSH to the server (`ssh-copy-id root@<server>`), so deploys never ask for a password.
+2. Copy `.deploy.env.example` to `.deploy.env` (git-ignored) and fill in `DEPLOY_HOST`, `PUBLIC_URL` and `BASE_PATH`.
+
+Then, every time:
 
 ```bash
-DEPLOY_HOST=root@<server> PUBLIC_URL=https://example.com BASE_PATH=/instaflow ./scripts/deploy.sh --migrate
+npm run deploy
 ```
 
-The script:
+It works on macOS, Linux and Windows (via Git Bash, found automatically). The command:
 
-1. Builds a standalone bundle with `npm run build:standalone`. Any `.env` is stripped from it, and Turbopack's symlinked packages are copied as real folders so a bundle built on Windows runs on Linux.
-2. With `--migrate`, applies migrations through an SSH tunnel.
-3. Uploads the bundle and swaps it in atomically. The previous release is kept as `/var/www/instaflow.prev`.
-4. Restarts the service and health-checks it, **rolling back automatically** if it doesn't come up.
+1. Checks it can reach the server over SSH and that the service and env file exist.
+2. Runs the typecheck and unit tests, and stops if either fails.
+3. Builds a standalone bundle with `npm run build:standalone`. Any `.env` is stripped from it, and Turbopack's symlinked packages are copied as real folders so a bundle built on Windows runs on Linux.
+4. Applies any pending database migrations through an SSH tunnel. With nothing pending, this does nothing.
+5. Uploads the bundle and swaps it in atomically. The previous release is kept as `/var/www/instaflow.prev`.
+6. Restarts the service and health-checks it, **rolling back automatically** if it doesn't come up.
+
+Flags: `npm run deploy -- --skip-checks` skips step 2, and `--skip-migrate` skips step 4. Environment variables override `.deploy.env`.
 
 **Changing the login password on the server:**
 
