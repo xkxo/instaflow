@@ -494,6 +494,8 @@ The system-user token doesn't expire, so there's no refresh job. It can still st
 | `npm run db:migrate` | Creates and applies migrations, then regenerates the client (development). |
 | `npm run db:deploy` | Applies existing migrations (production). |
 | `npm run db:studio` | Opens Prisma Studio. |
+| `npm run build:standalone` | Builds a self-contained server bundle in `.next/standalone` (`BASE_PATH`, `PUBLIC_URL` env). |
+| `./scripts/deploy.sh` | Builds and deploys to a VPS over SSH, with automatic rollback (see [Your own server](#your-own-server-vps-optionally-under-a-sub-path)). |
 
 ---
 
@@ -542,6 +544,84 @@ Set `META_REDIRECT_URI` to `https://<your-production-domain>/api/instagram/callb
 4. Pre-deploy command: `npm run db:deploy`.
 5. Add a daily cron that calls `/api/cron/health` (see [Token health check](#token-health-check-cron)).
 6. **Job worker:** jobs are handled by the in-process poller automatically, so no cron is needed.
+
+### Your own server (VPS), optionally under a sub-path
+
+The app can be served from a sub-path such as `https://example.com/instaflow`.
+
+- **Set at build time:** `NEXT_PUBLIC_BASE_PATH=/instaflow`.
+- **Handled for you:** links, redirects, cookie paths, API calls and the URLs shown in Settings all include it.
+- **Cookie scope:** the session cookie is scoped to the sub-path, so other apps on the same domain never receive it.
+
+**One-time setup on the server.** These steps match a typical Ubuntu box with Docker, Apache or nginx, and Node 22+.
+
+1. **A system user:**
+   ```bash
+   useradd --system --no-create-home --shell /usr/sbin/nologin instaflow
+   ```
+2. **PostgreSQL.** Bind it to localhost only:
+   ```bash
+   docker run -d --name instaflow-postgres --restart unless-stopped \
+     -e POSTGRES_USER=instaflow -e POSTGRES_DB=instaflow -e POSTGRES_PASSWORD=<random> \
+     -v instaflow-pgdata:/var/lib/postgresql/data -p 127.0.0.1:5433:5432 postgres:16-alpine
+   ```
+3. **The env file** at `/etc/instaflow/instaflow.env`, mode `600`, owned by root. **Single-quote every value**, so the `$` signs in the bcrypt hash are taken literally. Use the **raw** hash, not the `\$`-escaped one:
+   ```
+   DATABASE_URL='postgresql://instaflow:<password>@127.0.0.1:5433/instaflow'
+   APP_PASSWORD_HASH='$2b$12$...'
+   SESSION_SECRET='...'
+   TOKEN_ENCRYPTION_KEY='...'
+   CRON_SECRET='...'
+   META_WEBHOOK_VERIFY_TOKEN='...'
+   META_REDIRECT_URI='https://example.com/instaflow/api/instagram/callback'
+   ```
+4. **A systemd unit** `instaflow.service`:
+   - `User=instaflow`
+   - `WorkingDirectory=/var/www/instaflow`
+   - `Environment=PORT=3200 HOSTNAME=127.0.0.1 NODE_ENV=production`
+   - `EnvironmentFile=/etc/instaflow/instaflow.env`
+   - `ExecStart=/path/to/node server.js`
+   - `ReadWritePaths=/var/www/instaflow/.next/cache`, plus the usual hardening (`ProtectSystem=strict` and so on).
+5. **The reverse proxy.** Keep the sub-path on both sides.
+   - Apache:
+     ```apache
+     ProxyPreserveHost On
+     ProxyPass /instaflow http://127.0.0.1:3200/instaflow
+     ProxyPassReverse /instaflow http://127.0.0.1:3200/instaflow
+     ```
+   - nginx: `location /instaflow { proxy_pass http://127.0.0.1:3200; proxy_set_header Host $host; proxy_set_header X-Forwarded-Host $host; proxy_set_header X-Forwarded-Proto $scheme; }`
+   - **HTTPS:** terminate it at the proxy or CDN. Redirects use `X-Forwarded-Host` and `X-Forwarded-Proto`.
+6. **The daily health check** in `/etc/cron.d/instaflow`:
+   ```
+   0 6 * * * root . /etc/instaflow/instaflow.env && curl -fsS -o /dev/null -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3200/instaflow/api/cron/health
+   ```
+   Flow jobs need no cron, because the in-process poller handles them.
+
+**Deploying (and redeploying)** from your machine:
+
+```bash
+DEPLOY_HOST=root@<server> PUBLIC_URL=https://example.com BASE_PATH=/instaflow ./scripts/deploy.sh --migrate
+```
+
+The script:
+
+1. Builds a standalone bundle with `npm run build:standalone`. Any `.env` is stripped from it, and Turbopack's symlinked packages are copied as real folders so a bundle built on Windows runs on Linux.
+2. With `--migrate`, applies migrations through an SSH tunnel.
+3. Uploads the bundle and swaps it in atomically. The previous release is kept as `/var/www/instaflow.prev`.
+4. Restarts the service and health-checks it, **rolling back automatically** if it doesn't come up.
+
+**Changing the login password on the server:**
+
+1. Run `npm run hash-password` locally and copy the **raw** hash.
+2. On the server, set `APP_PASSWORD_HASH='<raw hash>'` in the env file.
+3. Run `systemctl restart instaflow`.
+
+**Meta settings** when running under a sub-path:
+
+- OAuth redirect URL: `https://example.com/instaflow/api/instagram/callback`
+- Webhook callback URL: `https://example.com/instaflow/api/webhooks/instagram`
+
+Settings → Webhooks shows the exact URL to copy.
 
 ---
 

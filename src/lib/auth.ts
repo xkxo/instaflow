@@ -1,12 +1,15 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { BASE_PATH } from "./base-path";
 import {
   SESSION_COOKIE,
   SESSION_MAX_AGE_SECONDS,
   createSessionToken,
   verifySessionToken,
 } from "./session";
+
+const COOKIE_PATH = BASE_PATH || "/";
 
 export async function setSessionCookie(): Promise<void> {
   const token = await createSessionToken();
@@ -16,13 +19,14 @@ export async function setSessionCookie(): Promise<void> {
     // so only require it in production where the app is served over HTTPS.
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    path: "/",
+    // Scoped to the app's sub-path so other apps on the same domain never receive it.
+    path: COOKIE_PATH,
     maxAge: SESSION_MAX_AGE_SECONDS,
   });
 }
 
 export async function clearSessionCookie(): Promise<void> {
-  (await cookies()).delete(SESSION_COOKIE);
+  (await cookies()).delete({ name: SESSION_COOKIE, path: COOKIE_PATH });
 }
 
 export async function isAuthenticated(): Promise<boolean> {
@@ -42,7 +46,7 @@ export function getPasswordHash(): string | null {
   if (!hash || !BCRYPT_HASH_RE.test(hash)) {
     console.error(
       "[auth] APP_PASSWORD_HASH is missing or not a valid bcrypt hash. " +
-        "Run `npm run hash-password`. In .env files, escape every $ as \$ " +
+        "Run `npm run hash-password`. In .env files, escape every $ as \\$ " +
         "or Next.js will treat parts of the hash as variables.",
     );
     return null;

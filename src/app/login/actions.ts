@@ -2,7 +2,7 @@
 
 import bcrypt from "bcryptjs";
 import { headers } from "next/headers";
-import { redirect } from "next/navigation";
+import { actionRedirect } from "@/lib/action-redirect";
 import { clearSessionCookie, getPasswordHash, setSessionCookie } from "@/lib/auth";
 import { clearLoginAttempts, consumeLoginAttempt, getClientIp } from "@/lib/rate-limit";
 
@@ -44,10 +44,10 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
 
   await clearLoginAttempts(ip);
   await setSessionCookie();
-  redirect(safeRedirectPath(formData.get("from")));
+  await actionRedirect(safeRedirectPath(formData.get("from")));
 }
 
 export async function logout(): Promise<void> {
   await clearSessionCookie();
-  redirect("/login");
+  await actionRedirect("/login");
 }

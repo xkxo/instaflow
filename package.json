@@ -17,7 +17,8 @@
     "db:studio": "prisma studio",
     "hash-password": "node scripts/hash-password.mjs",
     "gen-secrets": "node scripts/gen-secrets.mjs",
-    "test": "tsx --test \"src/**/*.test.ts\""
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "build:standalone": "prisma generate && node scripts/build-standalone.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.1",

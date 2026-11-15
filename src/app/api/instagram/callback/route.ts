@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
+import { withBasePath } from "@/lib/base-path";
 import { safeEqual } from "@/lib/crypto";
 import { getMetaConfig, getMissingMetaConfig } from "@/lib/instagram";
 import { connectWithAuthorizationCode } from "@/lib/instagram-account";
@@ -18,12 +19,12 @@ export async function GET(request: NextRequest) {
   const base = getMissingMetaConfig().length ? request.url : getMetaConfig().redirectUri;
 
   const finish = (result: ConnectResult) => {
-    const res = NextResponse.redirect(new URL(`/settings?instagram=${result}`, base), 303);
+    const res = NextResponse.redirect(new URL(withBasePath(`/settings?instagram=${result}`), base), 303);
     res.cookies.set(OAUTH_STATE_COOKIE, "", { path: OAUTH_CALLBACK_PATH, maxAge: 0 });
     return res;
   };
 
-  if (!(await isAuthenticated())) return NextResponse.redirect(new URL("/login", base));
+  if (!(await isAuthenticated())) return NextResponse.redirect(new URL(withBasePath("/login"), base));
   if (getMissingMetaConfig().length) return finish("not_configured");
 
   const params = request.nextUrl.searchParams;

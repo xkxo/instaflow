@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { ChevronRight, Radio, ScrollText } from "lucide-react";
 import type { WebhookEventRow } from "@/lib/webhooks/store";
 import { useNow } from "@/components/use-now";
+import { withBasePath } from "@/lib/base-path";
 
 const POLL_MS = 5000;
 
@@ -42,9 +43,9 @@ export function EventsTable({ initialEvents }: { initialEvents: WebhookEventRow[
     if (inFlight.current || document.hidden) return;
     inFlight.current = true;
     try {
-      const res = await fetch("/api/events?limit=50", { cache: "no-store" });
+      const res = await fetch(withBasePath("/api/events?limit=50"), { cache: "no-store" });
       if (res.status === 401) {
-        window.location.href = "/login?from=/logs";
+        window.location.href = withBasePath("/login?from=/logs");
         return;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

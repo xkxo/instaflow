@@ -29,17 +29,19 @@ export type AutomationListItem = {
 
 /** All automations with per-automation run stats (from FlowRun). */
 export async function listAutomations(): Promise<AutomationListItem[]> {
-  const [automations, triggered, dmsSent, followGated, completed] = await Promise.all([
-    prisma.automation.findMany({ orderBy: [{ active: "desc" }, { updatedAt: "desc" }] }),
-    // Simulated (dry-run) runs never count.
-    prisma.flowRun.groupBy({ by: ["automationId"], where: { dryRun: false }, _count: { _all: true } }),
-    prisma.flowRun.groupBy({ by: ["automationId"], where: { dryRun: false, openingSentAt: { not: null } }, _count: { _all: true } }),
-    prisma.flowRun.groupBy({ by: ["automationId"], where: { dryRun: false, followGatedAt: { not: null } }, _count: { _all: true } }),
-    prisma.flowRun.groupBy({ by: ["automationId"], where: { dryRun: false, status: "COMPLETED" }, _count: { _all: true } }),
-  ]);
-  const toMap = (rows: { automationId: string; _count: { _all: number } }[]) =>
-    new Map(rows.map((r) => [r.automationId, r._count._all]));
-  const [t, d, f, c] = [toMap(triggered), toMap(dmsSent), toMap(followGated), toMap(completed)];
+  const automations = await prisma.automation.findMany({ orderBy: [{ active: "desc" }, { updatedAt: "desc" }] });
+  // All four stats in one aggregate query. Simulated (dry-run) runs never count.
+  const rows = await prisma.$queryRaw<{ automationId: string; triggered: bigint; dms: bigint; gated: bigint; completed: bigint }[]>`
+    SELECT "automationId",
+           count(*)                                          AS triggered,
+           count(*) FILTER (WHERE "openingSentAt" IS NOT NULL) AS dms,
+           count(*) FILTER (WHERE "followGatedAt" IS NOT NULL) AS gated,
+           count(*) FILTER (WHERE "status" = 'COMPLETED')      AS completed
+    FROM "FlowRun"
+    WHERE NOT "dryRun"
+    GROUP BY "automationId"`;
+  const byId = new Map(rows.map((r) => [r.automationId, r]));
+  const n = (v: bigint | undefined) => Number(v ?? 0);
 
   return automations.map((a) => ({
     id: a.id,
@@ -54,7 +56,10 @@ export async function listAutomations(): Promise<AutomationListItem[]> {
     keywords: a.keywords,
     followGateEnabled: a.followGateEnabled,
     updatedAt: a.updatedAt,
-    stats: { triggered: t.get(a.id) ?? 0, dmsSent: d.get(a.id) ?? 0, followGated: f.get(a.id) ?? 0, completed: c.get(a.id) ?? 0 },
+    stats: (() => {
+      const s = byId.get(a.id);
+      return { triggered: n(s?.triggered), dmsSent: n(s?.dms), followGated: n(s?.gated), completed: n(s?.completed) };
+    })(),
   }));
 }
 

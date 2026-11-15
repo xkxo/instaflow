@@ -12,6 +12,18 @@ function isSessionless(pathname: string): boolean {
   return SESSIONLESS_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
+/**
+ * Origin the browser used. Behind a reverse proxy: X-Forwarded-Host (Apache/nginx) and
+ * X-Forwarded-Proto (Cloudflare/nginx). Direct access: the request URL itself.
+ */
+function publicOrigin(request: NextRequest): string {
+  const first = (v: string | null) => v?.split(",")[0].trim() || null;
+  const host = first(request.headers.get("x-forwarded-host"));
+  if (!host || !/^[a-z0-9.-]+(:\d+)?$/i.test(host)) return request.nextUrl.origin;
+  const proto = first(request.headers.get("x-forwarded-proto"));
+  return `${proto === "https" || proto === "http" ? proto : request.nextUrl.protocol.replace(":", "")}://${host}`;
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
@@ -19,8 +31,15 @@ export async function proxy(request: NextRequest) {
 
   const authed = await verifySessionToken(request.cookies.get(SESSION_COOKIE)?.value);
 
+  // Redirect to basePath + path on the PUBLIC origin (behind Apache/Cloudflare the app itself
+  // only sees 127.0.0.1 over http). nextUrl.pathname excludes the basePath.
+  const redirectTo = (path: string, query?: Record<string, string>) => {
+    const qs = query ? `?${new URLSearchParams(query)}` : "";
+    return NextResponse.redirect(`${publicOrigin(request)}${request.nextUrl.basePath}${path}${qs}`, 307);
+  };
+
   if (pathname === "/login") {
-    return authed ? NextResponse.redirect(new URL("/", request.url)) : NextResponse.next();
+    return authed ? redirectTo("/") : NextResponse.next();
   }
 
   if (authed) return NextResponse.next();
@@ -29,12 +48,10 @@ export async function proxy(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const loginUrl = new URL("/login", request.url);
-  if (pathname !== "/") loginUrl.searchParams.set("from", pathname + search);
-  return NextResponse.redirect(loginUrl);
+  return redirectTo("/login", pathname !== "/" ? { from: pathname + search } : undefined);
 }
 
 export const config = {
-  // Everything except Next.js static assets and root-level public files.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|robots.txt).*)"],
+  // Everything except Next.js static assets, the app icon and root-level public files.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|robots.txt).*)"],
 };

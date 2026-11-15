@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
+import { actionRedirect } from "@/lib/action-redirect";
 import { requireAuth } from "@/lib/auth";
 import { deleteAutomation, saveAutomation, setAutomationActive } from "@/lib/automations/store";
 import type { ValidationResult } from "@/lib/automations/schema";
@@ -23,7 +23,7 @@ export async function saveAutomationAction(id: string | null, input: unknown): P
   }
   if (!result.ok) return result;
   revalidatePath("/automations");
-  redirect(`/automations?saved=${encodeURIComponent(result.id)}`);
+  await actionRedirect(`/automations?saved=${encodeURIComponent(result.id)}`);
 }
 
 export async function toggleAutomationAction(id: string, active: boolean): Promise<{ error?: string }> {
@@ -62,5 +62,5 @@ export async function deleteAutomationAction(id: string): Promise<void> {
   await requireAuth();
   await deleteAutomation(id);
   revalidatePath("/automations");
-  redirect("/automations?deleted=1");
+  await actionRedirect("/automations?deleted=1");
 }

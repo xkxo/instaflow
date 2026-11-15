@@ -5,6 +5,7 @@ import { ChevronRight, Radio, Workflow } from "lucide-react";
 import type { RunRow } from "@/lib/flow/queries";
 import { Timeline } from "@/components/timeline";
 import { useNow } from "@/components/use-now";
+import { withBasePath } from "@/lib/base-path";
 
 const POLL_MS = 5000;
 
@@ -42,8 +43,8 @@ export function RunsTable({ initialRuns }: { initialRuns: RunRow[] }) {
     if (busy.current || document.hidden) return;
     busy.current = true;
     try {
-      const res = await fetch("/api/runs?limit=30", { cache: "no-store" });
-      if (res.status === 401) return void (window.location.href = "/login?from=/logs");
+      const res = await fetch(withBasePath("/api/runs?limit=30"), { cache: "no-store" });
+      if (res.status === 401) return void (window.location.href = withBasePath("/login?from=/logs"));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setRuns(((await res.json()) as { runs: RunRow[] }).runs);
       setError(null);

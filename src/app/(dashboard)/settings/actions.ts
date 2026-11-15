@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { actionRedirect } from "@/lib/action-redirect";
 import { requireAuth } from "@/lib/auth";
 import { buildLoginUrl, getMissingMetaConfig } from "@/lib/instagram";
 import { disconnectInstagram, syncWebhookSubscription, testInstagramConnection } from "@/lib/instagram-account";
@@ -13,7 +14,7 @@ import { OAUTH_CALLBACK_PATH, OAUTH_STATE_COOKIE, OAUTH_STATE_MAX_AGE_SECONDS } 
 
 export async function connectInstagram(): Promise<void> {
   await requireAuth();
-  if (getMissingMetaConfig().length) redirect("/settings?instagram=not_configured");
+  if (getMissingMetaConfig().length) await actionRedirect("/settings?instagram=not_configured");
 
   const state = randomBytes(32).toString("base64url");
   (await cookies()).set(OAUTH_STATE_COOKIE, state, {
@@ -30,7 +31,7 @@ export async function disconnect(): Promise<void> {
   await requireAuth();
   await disconnectInstagram();
   revalidatePath("/settings");
-  redirect("/settings?instagram=disconnected");
+  await actionRedirect("/settings?instagram=disconnected");
 }
 
 export type ResubscribeState = { ok: boolean; message: string } | undefined;

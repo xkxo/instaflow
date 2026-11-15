@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
 import { PageHeader } from "@/components/page";
+import { withBasePath } from "@/lib/base-path";
 import { EXPECTED_PERMISSIONS, getMissingMetaConfig, WEBHOOK_FIELDS } from "@/lib/instagram";
 import { getInstagramAccount, type InstagramAccountSummary } from "@/lib/instagram-account";
 import {
@@ -151,7 +152,9 @@ function ConnectedAccount({ account }: { account: InstagramAccountSummary }) {
 /** Public webhook URL: same origin as META_REDIRECT_URI (the app's public HTTPS host). */
 function webhookCallbackUrl(): string | null {
   try {
-    return process.env.META_REDIRECT_URI ? new URL("/api/webhooks/instagram", process.env.META_REDIRECT_URI).toString() : null;
+    return process.env.META_REDIRECT_URI
+      ? new URL(withBasePath("/api/webhooks/instagram"), process.env.META_REDIRECT_URI).toString()
+      : null;
   } catch {
     return null;
   }

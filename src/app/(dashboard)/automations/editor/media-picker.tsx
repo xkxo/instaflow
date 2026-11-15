@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Check, Clapperboard, Image as ImageIcon, Layers, Loader2, X } from "lucide-react";
 import { mediaKindLabel, type MediaRef } from "@/lib/automations/schema";
+import { withBasePath } from "@/lib/base-path";
 
 type Media = {
   id: string;
@@ -71,7 +72,9 @@ export function MediaPicker({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/instagram/media${after ? `?after=${encodeURIComponent(after)}` : ""}`, { cache: "no-store" });
+      const res = await fetch(withBasePath(`/api/instagram/media${after ? `?after=${encodeURIComponent(after)}` : ""}`), {
+        cache: "no-store",
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setItems((prev) => (after ? [...prev, ...data.items] : data.items));
